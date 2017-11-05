@@ -28,6 +28,10 @@ type State struct {
 	Ships [] Ship
 }
 
+type Result struct {
+	State State
+}
+
 type SolarsystemViewer struct {
 	state State
 }
@@ -80,11 +84,6 @@ func run() {
 	labels := []*text.Text{}
 
 	atlas := text.NewAtlas(basicfont.Face7x13, text.ASCII, text.RangeTable(unicode.Latin))
-	basicTxt := text.New(pixel.V(10, 100), atlas)
-
-	fmt.Fprintln(basicTxt, "Hello, text!")
-	fmt.Fprintln(basicTxt, "I support multiple lines!")
-	fmt.Fprintf(basicTxt, "And I'm an %s, yay!", "io.Writer")
 
 	recvChannel := make(chan string)
 	go receive_loop(conn, recvChannel)
@@ -93,9 +92,14 @@ func run() {
 		case msgReceived := <- recvChannel:
 			fmt.Printf("Message Received: %s\n", msgReceived)
 			if !strings.HasPrefix(msgReceived, "error:") {
-				json.Unmarshal([]byte(msgReceived), &viewer.state)
-				imd.Clear()
-				labels = viewer.render(imd, atlas)
+				var result Result
+				json.Unmarshal([]byte(msgReceived), &result)
+				fmt.Printf("%v", result)
+				if len(result.State.Ships) > 0 {
+					viewer.state = result.State
+					imd.Clear()
+					labels = viewer.render(imd, atlas)
+				}
 			}
 		default:
 			// No data received
@@ -115,6 +119,7 @@ func receive_loop(conn net.Conn, c chan string) {
 		n, err := conn.Read(recvBuf)
 		if err != nil {
 			fmt.Print(err)
+			break
 		}
 		msgReceived := string(recvBuf[:n])
 		c <- msgReceived

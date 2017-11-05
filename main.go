@@ -90,11 +90,9 @@ func run() {
 	for !win.Closed() {
 		select {
 		case msgReceived := <- recvChannel:
-			fmt.Printf("Message Received: %s\n", msgReceived)
 			if !strings.HasPrefix(msgReceived, "error:") {
 				var result Result
 				json.Unmarshal([]byte(msgReceived), &result)
-				fmt.Printf("%v", result)
 				if len(result.State.Ships) > 0 {
 					viewer.state = result.State
 					imd.Clear()
@@ -114,7 +112,7 @@ func run() {
 }
 
 func receive_loop(conn net.Conn, c chan string) {
-	recvBuf := make([]byte, 4096)
+	recvBuf := make([]byte, 16384)
 	for {
 		n, err := conn.Read(recvBuf)
 		if err != nil {

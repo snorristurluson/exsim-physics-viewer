@@ -11,25 +11,27 @@ import (
 	"net"
 	"encoding/json"
 	"github.com/faiface/pixel/imdraw"
-	"strings"
 )
+
+type CommandResult struct {
+	Result string
+	State json.RawMessage
+}
 
 type Vector3 struct {
 	X float64
 	Y float64
 	Z float64
 }
+
 type Ship struct {
 	Owner int64
 	Type int64
 	Position Vector3
 }
+
 type State struct {
 	Ships [] Ship
-}
-
-type Result struct {
-	State State
 }
 
 type SolarsystemViewer struct {
@@ -53,13 +55,16 @@ func (viewer* SolarsystemViewer) render(imd* imdraw.IMDraw, atlas* text.Atlas) (
 		fmt.Fprintf( label,"%v", i)
 		labels = append(labels, label)
 	}
+
+	numShips := text.New(pixel.V(10, 10), atlas)
+	numShips.Color = colornames.Darkgreen
+	fmt.Fprintf( numShips, "Ships: %v", len(viewer.state.Ships))
+	labels = append(labels, numShips)
+
 	return labels
 }
 
 func run() {
-	//x := `{"command": "addship", "owner": 1, "type": 2, "position": {"x": 100.0, "y": 100.0, "z": 0.0}}"`
-	//x := `{"command": "addship", "owner": 1, "type": 2, "position": {"x": 200.0, "y": 100.0, "z": 0.0}}"`
-	//x := `{"command": "addship", "owner": 1, "type": 2, "position": {"x": 200.0, "y": 150.0, "z": 0.0}}"`
 	full_address := "localhost:4041"
 	conn, err := net.Dial("tcp", full_address)
 	if err != nil {
@@ -85,20 +90,14 @@ func run() {
 
 	atlas := text.NewAtlas(basicfont.Face7x13, text.ASCII, text.RangeTable(unicode.Latin))
 
-	recvChannel := make(chan string)
+	recvChannel := make(chan State)
 	go receive_loop(conn, recvChannel)
 	for !win.Closed() {
 		select {
-		case msgReceived := <- recvChannel:
-			if !strings.HasPrefix(msgReceived, "error:") {
-				var result Result
-				json.Unmarshal([]byte(msgReceived), &result)
-				if len(result.State.Ships) > 0 {
-					viewer.state = result.State
-					imd.Clear()
-					labels = viewer.render(imd, atlas)
-				}
-			}
+		case stateReceived := <- recvChannel:
+			viewer.state = stateReceived
+			imd.Clear()
+			labels = viewer.render(imd, atlas)
 		default:
 			// No data received
 		}
@@ -111,16 +110,24 @@ func run() {
 	}
 }
 
-func receive_loop(conn net.Conn, c chan string) {
-	recvBuf := make([]byte, 16384)
+func receive_loop(conn net.Conn, c chan State) {
+	decoder := json.NewDecoder(conn)
 	for {
-		n, err := conn.Read(recvBuf)
+		var cmd CommandResult
+		err := decoder.Decode(&cmd)
 		if err != nil {
-			fmt.Print(err)
+			fmt.Printf("Error in Decode: %v\n", err)
 			break
 		}
-		msgReceived := string(recvBuf[:n])
-		c <- msgReceived
+		if cmd.Result == "state" {
+			var state State
+			err := json.Unmarshal(cmd.State, &state)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				continue
+			}
+			c <- state
+		}
 	}
 }
 

@@ -11,7 +11,9 @@ import (
 	"net"
 	"encoding/json"
 	"github.com/faiface/pixel/imdraw"
-)
+	"time"
+	"math"
+	)
 
 type CommandResult struct {
 	Result string
@@ -28,10 +30,11 @@ type Ship struct {
 	Owner int64
 	Type int64
 	Position Vector3
+	InRange [] int64
 }
 
 type State struct {
-	Ships [] Ship
+	Ships map[string] Ship
 }
 
 type SolarsystemViewer struct {
@@ -42,24 +45,41 @@ func NewSolarsystemViewer() (*SolarsystemViewer){
 	return &SolarsystemViewer{}
 }
 
-func (viewer* SolarsystemViewer) render(imd* imdraw.IMDraw, atlas* text.Atlas) ([]*text.Text) {
+func (viewer* SolarsystemViewer) render(imd* imdraw.IMDraw, atlas* text.Atlas, thickness float64) ([]*text.Text) {
 	labels := []*text.Text{}
-	for i, ship := range(viewer.state.Ships) {
-		x := ship.Position.X
-		y := ship.Position.Y
-		imd.Color = colornames.Black
-		imd.Push(pixel.V(x,y))
-		imd.Circle(10, 1)
-		label := text.New(pixel.V(x, y), atlas)
-		label.Color = colornames.Black
-		fmt.Fprintf( label,"%v", i)
-		labels = append(labels, label)
+	shipsById := make(map[int64]Ship)
+	for _, ship := range(viewer.state.Ships) {
+		shipsById[ship.Owner] = ship
 	}
 
-	numShips := text.New(pixel.V(10, 10), atlas)
-	numShips.Color = colornames.Darkgreen
-	fmt.Fprintf( numShips, "Ships: %v", len(viewer.state.Ships))
-	labels = append(labels, numShips)
+	for _, ship := range(viewer.state.Ships) {
+		x := ship.Position.X
+		y := ship.Position.Y
+		pos := pixel.V(x,y)
+
+		imd.Color = colornames.Black
+		imd.Push(pos)
+		imd.Circle(10, thickness)
+
+		if false {
+			imd.Color = colornames.Gray
+			imd.Push(pos)
+			imd.Circle(100, thickness)
+
+		}
+		for _, shipInRange := range(ship.InRange) {
+			other := shipsById[shipInRange]
+			otherPos := pixel.V(other.Position.X, other.Position.Y)
+			imd.Color = colornames.Gray
+			imd.Push(pos, otherPos)
+			imd.Line(thickness)
+		}
+
+		label := text.New(pos, atlas)
+		label.Color = colornames.Black
+		fmt.Fprintf( label,"%v", ship.Owner)
+		labels = append(labels, label)
+	}
 
 	return labels
 }
@@ -85,27 +105,64 @@ func run() {
 	}
 
 	viewer := NewSolarsystemViewer()
+	camPos := pixel.ZV
+	camSpeed := 500.0
+	camZoom := 1.0
+	camZoomSpeed := 1.2
+
 	imd := imdraw.New(nil)
 	labels := []*text.Text{}
 
 	atlas := text.NewAtlas(basicfont.Face7x13, text.ASCII, text.RangeTable(unicode.Latin))
+	numShips := text.New(pixel.V(10, 10), atlas)
+	numShips.Color = colornames.Darkgreen
+	fmt.Fprintf( numShips, "Ships: %v", len(viewer.state.Ships))
 
 	recvChannel := make(chan State)
 	go receive_loop(conn, recvChannel)
+	last := time.Now()
 	for !win.Closed() {
+		dt := time.Since(last).Seconds()
+		last = time.Now()
+
 		select {
 		case stateReceived := <- recvChannel:
 			viewer.state = stateReceived
+			numShips.Clear()
+			numShips.Dot = numShips.Orig
+			fmt.Fprintf( numShips, "Ships: %v", len(viewer.state.Ships))
 			imd.Clear()
-			labels = viewer.render(imd, atlas)
+			labels = viewer.render(imd, atlas, 1.0 / camZoom)
 		default:
 			// No data received
 		}
 		win.Clear(colornames.Skyblue)
+
+		if win.Pressed(pixelgl.KeyLeft) {
+			camPos.X -= camSpeed * dt
+		}
+		if win.Pressed(pixelgl.KeyRight) {
+			camPos.X += camSpeed * dt
+		}
+		if win.Pressed(pixelgl.KeyDown) {
+			camPos.Y -= camSpeed * dt
+		}
+		if win.Pressed(pixelgl.KeyUp) {
+			camPos.Y += camSpeed * dt
+		}
+		camZoom *= math.Pow(camZoomSpeed, win.MouseScroll().Y)
+
+		cam := pixel.IM.Scaled(camPos, camZoom).Moved(win.Bounds().Center().Sub(camPos))
+		win.SetMatrix(cam)
+
 		imd.Draw(win)
 		for _, label := range(labels) {
 			label.Draw(win, pixel.IM)
 		}
+
+		win.SetMatrix(pixel.IM)
+		numShips.Draw(win, pixel.IM)
+
 		win.Update()
 	}
 }
